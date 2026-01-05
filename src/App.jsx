@@ -174,6 +174,18 @@ function App() {
         </div>
       </div>
 
+      {/* 1. NEW YELLOW WARNING (Insert here) */}
+      {schedule && (
+        <div className="warning-panel">
+          <span style={{ fontSize: '1.2rem', marginTop: '-2px' }}>ℹ️</span>
+          <div>
+            <strong>Periodo de Gracia Activo:</strong> Los indicadores rojos en la grilla durante los primeros <strong>{params.N} días</strong> son esperados.
+            <br />
+            Se deben a la fase inicial de <em>Subida + Inducción</em> donde es físicamente imposible tener cobertura completa.
+          </div>
+        </div>
+      )}
+
       {errors.length > 0 && (
         <div className="alerts-panel">
           <h3 className="alerts-header">
