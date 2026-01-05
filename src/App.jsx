@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import html2canvas from 'html2canvas';
+import { generatePDFReport } from './logic/reportGenerator';
 import { generateSchedule, validateSchedule, STATES } from './logic/scheduler';
 import { ScheduleGrid } from './components/ScheduleGrid';
 import './App.css';
@@ -30,10 +31,11 @@ function App() {
     setErrors(errs);
   };
 
-  const handleExport = async () => {
+  // Helper to capture grid image
+  const captureGrid = async () => {
     // Target the outer card which contains both the scroll area and the legend
     const originalCard = document.querySelector('.results-card');
-    if (!originalCard) return;
+    if (!originalCard) return null;
 
     // Clone the entire card
     const clone = originalCard.cloneNode(true);
@@ -79,17 +81,35 @@ function App() {
         scrollX: 0,
         scrollY: 0
       });
-
-      const link = document.createElement('a');
-      link.download = `supervisores_${params.N}x${params.M}.png`;
-      link.href = canvas.toDataURL();
-      link.click();
+      return canvas.toDataURL();
     } catch (err) {
-      console.error("Export failed:", err);
-      alert("Error al exportar la imagen.");
+      console.error("Capture failed:", err);
+      return null;
     } finally {
-      document.body.removeChild(clone); // Cleanup
+      document.body.removeChild(clone);
     }
+  };
+
+  const handleExport = async () => {
+    const dataUrl = await captureGrid();
+    if (!dataUrl) {
+      alert("Error al exportar la imagen.");
+      return;
+    }
+
+    const link = document.createElement('a');
+    link.download = `supervisores_${params.N}x${params.M}.png`;
+    link.href = dataUrl;
+    link.click();
+  };
+
+  const handlePDFExport = async () => {
+    const dataUrl = await captureGrid();
+    if (!dataUrl) {
+      alert("Error generando la imagen para el reporte.");
+      return;
+    }
+    generatePDFReport(params, errors, dataUrl);
   };
 
   useEffect(() => {
@@ -162,7 +182,7 @@ function App() {
           <ul className="alerts-list">
             {errors.map((e, idx) => (
               <li key={idx} className="alert-item">
-                <span className="alert-badge">Día {e.day}</span>
+                <span className="alert-badge">Día {e.day + 1}</span>
                 {e.msg}
               </li>
             ))}
@@ -183,9 +203,14 @@ function App() {
             <div className="legend-item"><div className="legend-dot" style={{ backgroundColor: 'var(--color-bajada)' }}></div>Bajada</div>
             <div className="legend-item"><div className="legend-dot" style={{ backgroundColor: 'var(--color-descanso)' }}></div>Descanso</div>
 
-            <button className="btn-secondary" onClick={handleExport} style={{ marginLeft: 'auto' }}>
-              📸 Descargar
-            </button>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
+              <button className="btn-secondary" onClick={handlePDFExport}>
+                📄 Reporte PDF
+              </button>
+              <button className="btn-secondary" onClick={handleExport}>
+                📸 Imagen
+              </button>
+            </div>
           </div>
         </div>
       )}

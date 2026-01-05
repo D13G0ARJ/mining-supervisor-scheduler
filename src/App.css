@@ -209,9 +209,13 @@ body {
 }
 
 .grid-scroll-area {
+    display: block;
+    width: 100%;
     overflow-x: auto;
     /* This area scrolls */
     margin-bottom: 2rem;
+    padding-bottom: 5px;
+    /* Space for scrollbar */
     /* Space for legend */
 }
 
