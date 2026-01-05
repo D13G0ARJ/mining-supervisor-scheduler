@@ -164,6 +164,15 @@ const runSmartAgent = (otherSchedules, params, totalDays, agentName) => {
             let pCount = 0;
 
             while (cursor < totalDays) {
+                // MAXIMUM SECURITY RULE:
+                // Check occupancy BEFORE assigning P.
+                // If there are already 2 supervisors (S1 and S3) drilling today, S2 CANNOT enter.
+                const currentOccupancy = otherSchedules.filter(s => s[cursor] === STATES.PERFORACION).length;
+                if (currentOccupancy >= 2) {
+                    // Already full, abort drilling and switch to Bajada
+                    break;
+                }
+
                 const needed = isPNeeded(cursor, otherSchedules);
 
                 // Hysteresis: If we just started P, stay at least minP.
@@ -197,10 +206,18 @@ const runSmartAgent = (otherSchedules, params, totalDays, agentName) => {
                     }
 
                     if (futureDemand !== -1) {
-                        // Demand coming soon. Stay P.
-                        schedule[cursor] = STATES.PERFORACION;
-                        cursor++;
-                        pCount++;
+                        // MAXIMUM SECURITY RULE (Redundant Check):
+                        // Before staying for future demand, check TODAY's occupancy again.
+                        const currentOccupancy = otherSchedules.filter(s => s[cursor] === STATES.PERFORACION).length;
+
+                        if (currentOccupancy < 2) {
+                            schedule[cursor] = STATES.PERFORACION;
+                            cursor++;
+                            pCount++;
+                        } else {
+                            // Already full (2 supervisors), must leave to avoid violation.
+                            break;
+                        }
                     } else {
                         // Safe to drop.
                         break;

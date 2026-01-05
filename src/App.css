@@ -134,6 +134,25 @@ body {
     transform: scale(0.98);
 }
 
+.btn-secondary {
+    background-color: transparent;
+    color: var(--accent-color);
+    border: 1px solid var(--accent-color);
+    padding: 0.6rem 1.5rem;
+    border-radius: 6px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.2s, transform 0.1s;
+}
+
+.btn-secondary:hover {
+    background-color: rgba(33, 150, 243, 0.1);
+}
+
+.btn-secondary:active {
+    transform: scale(0.98);
+}
+
 /* Alerts Panel */
 .alerts-panel {
     background-color: #2a1c1c;
@@ -182,12 +201,24 @@ body {
 }
 
 /* Schedule Grid */
-.grid-container {
+.results-card {
     background-color: var(--bg-card);
     border-radius: 12px;
     padding: 1.5rem;
     border: 1px solid var(--border-color);
+}
+
+.grid-scroll-area {
     overflow-x: auto;
+    /* This area scrolls */
+    margin-bottom: 2rem;
+    /* Space for legend */
+}
+
+/* Old .grid-container now inside scroll area, removed its outer styles */
+.grid-wrapper {
+    display: inline-block;
+    min-width: 100%;
 }
 
 .grid-wrapper {
@@ -213,6 +244,8 @@ body {
     background-color: var(--bg-card);
     z-index: 10;
     border-right: 1px solid var(--border-color);
+    box-shadow: 4px 0 8px -2px rgba(0, 0, 0, 0.5);
+    /* Pro look shadow */
 }
 
 .grid-cells {

@@ -25,10 +25,8 @@ a:hover {
 
 body {
   margin: 0;
-  display: flex;
-  align-items: flex-start;
-  /* Changed from center to prevent clipping */
-  min-width: 320px;
+  display: block;
+  /* Use block layout for standard flow */
   min-height: 100vh;
 }
 
