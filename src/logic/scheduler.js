@@ -328,8 +328,10 @@ export const generateSchedule = (params) => {
     // S1: fixed (never modified).
     const s1 = generateFixedPattern(0, params, totalDays);
 
-    // S3: starts so that its P begins when S1 descends (PDF model).
-    const offsetS3 = N - induction;
+    // S3: start earlier so it begins drilling at day (N-2), covering the 3-day
+    // transition window where S2 must do B + D + S to be drilling at day (N+1).
+    // First P day index = offset + 1 + induction => offset = (N - 2) - (1 + induction) = N - induction - 3.
+    const offsetS3 = Math.max(0, N - induction - 3);
     const baselineS3 = generateFixedPattern(offsetS3, params, totalDays);
 
     // Solver adjusts S2 and S3 to satisfy strict rules.
@@ -350,7 +352,7 @@ export const generateBaselineSchedule = (params) => {
     const { totalDays, N, induction } = params;
     const s1 = generateFixedPattern(0, params, totalDays);
     const s2 = generateFixedPattern(0, params, totalDays);
-    const offsetS3 = N - induction;
+    const offsetS3 = Math.max(0, N - induction - 3);
     const s3 = generateFixedPattern(offsetS3, params, totalDays);
     return { s1, s2, s3 };
 };
