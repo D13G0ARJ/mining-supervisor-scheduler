@@ -367,3 +367,55 @@ export const validateSchedule = (schedule, totalDays, gracePeriod = 0) => {
     }
     return errors;
 };
+
+export const generateScheduleForRequiredDrillDays = (params) => {
+    const { requiredDrillDays } = params;
+    if (!Number.isInteger(requiredDrillDays) || requiredDrillDays < 1) {
+        throw new Error('Días de perforación requeridos inválidos');
+    }
+
+    const gracePeriod = getCoverageStartDayIndex(params);
+
+    const findCutIndex = (sch, totalDays, required) => {
+        let covered = 0;
+        for (let i = gracePeriod; i < totalDays; i++) {
+            const pCount =
+                (sch.s1[i] === STATES.PERFORACION ? 1 : 0) +
+                (sch.s2[i] === STATES.PERFORACION ? 1 : 0) +
+                (sch.s3[i] === STATES.PERFORACION ? 1 : 0);
+
+            if (pCount === 2) {
+                covered++;
+                if (covered >= required) return i;
+            }
+        }
+        return null;
+    };
+
+    const baseBuffer = (params.N + params.M) * 6 + 30;
+    let simulationDays = requiredDrillDays + gracePeriod + baseBuffer;
+    let lastError = null;
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const scheduleParams = { ...params, totalDays: simulationDays };
+        const result = generateSchedule(scheduleParams);
+        const cutIdx = findCutIndex(result, simulationDays, requiredDrillDays);
+
+        if (cutIdx === null) {
+            simulationDays = Math.floor(simulationDays * 1.5);
+            lastError = new Error('No se alcanzó el total de días de perforación requeridos dentro del horizonte de simulación.');
+            continue;
+        }
+
+        const finalDays = cutIdx + 1;
+        const finalSchedule = {
+            s1: result.s1.slice(0, finalDays),
+            s2: result.s2.slice(0, finalDays),
+            s3: result.s3.slice(0, finalDays)
+        };
+
+        return { schedule: finalSchedule, gracePeriod, totalDays: finalDays };
+    }
+
+    throw lastError || new Error('No se pudo generar el cronograma dentro de los límites de simulación.');
+};

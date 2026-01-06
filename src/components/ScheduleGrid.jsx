@@ -25,7 +25,29 @@ const Cell = ({ state, label }) => {
     );
 };
 
-export const ScheduleGrid = ({ schedule }) => {
+const formatDayHeader = (idx, gracePeriod) => {
+    if (!Number.isInteger(gracePeriod) || gracePeriod <= 0) return String(idx + 1);
+
+    if (idx < gracePeriod) {
+        if (idx === 0) return 'S';
+        return `I${idx}`;
+    }
+
+    return `D${idx - gracePeriod + 1}`;
+};
+
+const formatTooltipLabel = (idx, gracePeriod) => {
+    if (!Number.isInteger(gracePeriod) || gracePeriod <= 0) return `Día ${idx + 1}`;
+
+    if (idx < gracePeriod) {
+        if (idx === 0) return 'Periodo de gracia: Subida (S)';
+        return `Periodo de gracia: Inducción (I${idx})`;
+    }
+
+    return `Día ${idx - gracePeriod + 1}`;
+};
+
+export const ScheduleGrid = ({ schedule, gracePeriod = 0 }) => {
     const dayCount = schedule.s1.length;
     const days = Array.from({ length: dayCount }, (_, i) => i);
     const calculateP = (vals) => vals.filter(v => v === STATES.PERFORACION).length;
@@ -37,7 +59,7 @@ export const ScheduleGrid = ({ schedule }) => {
                 <div className="row-header">Día</div>
                 <div className="grid-cells">
                     {days.map(d => (
-                        <div key={d} className="cell cell-header">{d + 1}</div>
+                        <div key={d} className="cell cell-header">{formatDayHeader(d, gracePeriod)}</div>
                     ))}
                 </div>
             </div>
@@ -46,7 +68,7 @@ export const ScheduleGrid = ({ schedule }) => {
             <div className="grid-row">
                 <div className="row-header">S1</div>
                 <div className="grid-cells">
-                    {schedule.s1.map((s, i) => <Cell key={`s1-${i}`} state={s} label={`Día ${i + 1}`} />)}
+                    {schedule.s1.map((s, i) => <Cell key={`s1-${i}`} state={s} label={formatTooltipLabel(i, gracePeriod)} />)}
                 </div>
             </div>
 
@@ -54,7 +76,7 @@ export const ScheduleGrid = ({ schedule }) => {
             <div className="grid-row">
                 <div className="row-header">S2</div>
                 <div className="grid-cells">
-                    {schedule.s2.map((s, i) => <Cell key={`s2-${i}`} state={s} label={`Día ${i + 1}`} />)}
+                    {schedule.s2.map((s, i) => <Cell key={`s2-${i}`} state={s} label={formatTooltipLabel(i, gracePeriod)} />)}
                 </div>
             </div>
 
@@ -62,7 +84,7 @@ export const ScheduleGrid = ({ schedule }) => {
             <div className="grid-row">
                 <div className="row-header">S3</div>
                 <div className="grid-cells">
-                    {schedule.s3.map((s, i) => <Cell key={`s3-${i}`} state={s} label={`Día ${i + 1}`} />)}
+                    {schedule.s3.map((s, i) => <Cell key={`s3-${i}`} state={s} label={formatTooltipLabel(i, gracePeriod)} />)}
                 </div>
             </div>
 
@@ -74,7 +96,7 @@ export const ScheduleGrid = ({ schedule }) => {
                         const p = calculateP([schedule.s1[i], schedule.s2[i], schedule.s3[i]]);
                         const isError = p !== 2;
                         return (
-                            <div key={`p-${i}`} className={`cell cell-p-count ${isError ? 'error' : ''}`} title={`Día ${i + 1}: ${p} perforando`}>
+                            <div key={`p-${i}`} className={`cell cell-p-count ${isError ? 'error' : ''}`} title={`${formatTooltipLabel(i, gracePeriod)}: ${p} perforando`}>
                                 {p}
                             </div>
                         );

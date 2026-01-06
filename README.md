@@ -16,6 +16,26 @@ El sistema resuelve un problema de asignación de recursos con restricciones fue
 2.  **Restricción:** Nunca 3 supervisores al mismo tiempo.
 3.  **Dinámica:** Régimen variable ($N$ días trabajo x $M$ días descanso).
 
+## 📌 Definición de Parámetros (según documento)
+
+El cronograma se construye con el ciclo de estados:
+
+- `S` = Subida (siempre 1 día)
+- `I1..In` = Inducción (configurable 1 a 5 días)
+- `D1..Dn` = Perforación (días efectivos requeridos)
+- `B` = Bajada (siempre 1 día)
+- `DESC1..` = Descanso
+
+Para los inputs del régimen **NxM** en esta implementación:
+
+- **N (Trabajo)**: número de días de trabajo **después de la subida**. En el primer ciclo se compone de `I + P`.
+    - Ejemplo: si `N=14` e `inducción=5`, el primer ciclo tiene `5` días de inducción y `9` días de perforación.
+- **M (Descanso total)**: tamaño del bloque no-productivo que separa ciclos y que, según el documento, se interpreta como:
+    - `B` (1 día) + `DESC` (días) + `S` (1 día del siguiente ciclo)
+    - Por eso el **descanso real** queda: `DESC = M - 2`.
+
+Nota: Esta definición es la que hace que los cálculos de las casuísticas del documento (por ejemplo “S1 baja día = 1 + N”) coincidan.
+
 ## 🛠️ Arquitectura de la Solución
 
 El núcleo del proyecto (`src/logic/scheduler.js`) implementa una estrategia jerárquica de 3 niveles:

@@ -93,6 +93,25 @@ body {
     gap: 0.5rem;
 }
 
+.form-hint {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    line-height: 1.35;
+    margin-top: 0.25rem;
+    max-width: 520px;
+}
+
+.form-hint strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.form-actions {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-end;
+}
+
 .form-group label {
     font-size: 0.875rem;
     color: var(--text-secondary);

@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import html2canvas from 'html2canvas';
 import { generatePDFReport } from './logic/reportGenerator';
-import { generateSchedule, validateSchedule, getCoverageStartDayIndex } from './logic/scheduler';
+import { generateScheduleForRequiredDrillDays, validateSchedule, getCoverageStartDayIndex } from './logic/scheduler';
 import { ScheduleGrid } from './components/ScheduleGrid';
 import './App.css';
+
+const MAX_EXPORT_DAYS = 90;
 
 function App() {
   const [params, setParams] = useState({
@@ -16,6 +18,11 @@ function App() {
   const [schedule, setSchedule] = useState(null);
   const [errors, setErrors] = useState([]);
 
+  const gracePeriod = getCoverageStartDayIndex(params);
+  const expectedTotalColumns = params.requiredDrillDays + gracePeriod;
+  // El límite de exportación se aplica a los días requeridos (D1..Dn), no al total de columnas (incluye gracia).
+  const isScheduleTooLongToExport = params.requiredDrillDays > MAX_EXPORT_DAYS;
+
   const handleCompute = () => {
     // PDF model: N = días de trabajo excluyendo subida (S). Primer ciclo perfora: N - induction.
     if (params.N <= params.induction + 1) {
@@ -24,52 +31,16 @@ function App() {
     }
 
     try {
-      const gracePeriod = getCoverageStartDayIndex(params);
+      const { schedule: finalSchedule, gracePeriod, totalDays } = generateScheduleForRequiredDrillDays({
+        N: params.N,
+        M: params.M,
+        induction: params.induction,
+        requiredDrillDays: params.requiredDrillDays
+      });
 
-      const findCutIndex = (sch, totalDays, required) => {
-        let covered = 0;
-        for (let i = gracePeriod; i < totalDays; i++) {
-          const pCount =
-            (sch.s1[i] === 'P' ? 1 : 0) +
-            (sch.s2[i] === 'P' ? 1 : 0) +
-            (sch.s3[i] === 'P' ? 1 : 0);
-          if (pCount === 2) {
-            covered++;
-            if (covered >= required) return i;
-          }
-        }
-        return null;
-      };
-
-      const baseBuffer = (params.N + params.M) * 6 + 30;
-      let simulationDays = params.requiredDrillDays + gracePeriod + baseBuffer;
-      let lastError = null;
-
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const scheduleParams = { ...params, totalDays: simulationDays };
-        const result = generateSchedule(scheduleParams);
-        const cutIdx = findCutIndex(result, simulationDays, params.requiredDrillDays);
-
-        if (cutIdx === null) {
-          simulationDays = Math.floor(simulationDays * 1.5);
-          lastError = new Error('No se alcanzó el total de días de perforación requeridos dentro del horizonte de simulación.');
-          continue;
-        }
-
-        const finalDays = cutIdx + 1;
-        const finalSchedule = {
-          s1: result.s1.slice(0, finalDays),
-          s2: result.s2.slice(0, finalDays),
-          s3: result.s3.slice(0, finalDays)
-        };
-
-        setSchedule(finalSchedule);
-        const errs = validateSchedule(finalSchedule, finalDays, gracePeriod);
-        setErrors(errs);
-        return;
-      }
-
-      throw lastError || new Error('No se pudo generar el cronograma dentro de los límites de simulación.');
+      setSchedule(finalSchedule);
+      const errs = validateSchedule(finalSchedule, totalDays, gracePeriod);
+      setErrors(errs);
     } catch (e) {
       console.error(e);
       alert(e?.message || 'No se pudo generar un cronograma válido con esos parámetros.');
@@ -138,6 +109,11 @@ function App() {
   };
 
   const handleExport = async () => {
+    if (!schedule) return;
+    if (isScheduleTooLongToExport) {
+      alert(`No se puede descargar la imagen: los días requeridos de perforación son ${params.requiredDrillDays} (máximo permitido: ${MAX_EXPORT_DAYS}).`);
+      return;
+    }
     const dataUrl = await captureGrid();
     if (!dataUrl) {
       alert("Error al exportar la imagen.");
@@ -151,6 +127,11 @@ function App() {
   };
 
   const handlePDFExport = async () => {
+    if (!schedule) return;
+    if (isScheduleTooLongToExport) {
+      alert(`No se puede descargar el PDF: los días requeridos de perforación son ${params.requiredDrillDays} (máximo permitido: ${MAX_EXPORT_DAYS}).`);
+      return;
+    }
     const dataUrl = await captureGrid();
     if (!dataUrl) {
       alert("Error generando la imagen para el reporte.");
@@ -212,7 +193,7 @@ function App() {
             />
           </div>
           <div className="form-group">
-            <label>Días de Perforación Requeridos</label>
+            <label>Días con 2 supervisores perforando (requeridos)</label>
             <input
               className="form-input"
               type="number"
@@ -220,8 +201,13 @@ function App() {
               value={params.requiredDrillDays}
               onChange={e => setParams({ ...params, requiredDrillDays: parseInt(e.target.value) })}
             />
+            <div className="form-hint">
+              Nota: el conteo de perforación inicia después del periodo de gracia.
+              <br />
+              Gracia: <strong>{gracePeriod}</strong> días · Total a mostrar: <strong>{expectedTotalColumns}</strong> días.
+            </div>
           </div>
-          <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end' }}>
+          <div className="form-actions">
             <button className="btn-primary" onClick={handleCompute}>
               Calcular Cronograma
             </button>
@@ -229,7 +215,6 @@ function App() {
         </div>
       </div>
 
-      {/* 1. NEW YELLOW WARNING (Insert here) */}
       {schedule && (
         <div className="warning-panel">
           <span style={{ fontSize: '1.2rem', marginTop: '-2px' }}>ℹ️</span>
@@ -260,7 +245,7 @@ function App() {
       {schedule && (
         <div className="results-card">
           <div className="grid-scroll-area">
-            <ScheduleGrid schedule={schedule} totalDays={schedule.s1.length} />
+            <ScheduleGrid schedule={schedule} totalDays={schedule.s1.length} gracePeriod={getCoverageStartDayIndex(params)} />
           </div>
 
           <div className="legend">
@@ -270,7 +255,11 @@ function App() {
             <div className="legend-item"><div className="legend-dot" style={{ backgroundColor: 'var(--color-bajada)' }}></div>Bajada</div>
             <div className="legend-item"><div className="legend-dot" style={{ backgroundColor: 'var(--color-descanso)' }}></div>Descanso</div>
 
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
+            <div style={{ marginLeft: 'auto', marginRight: '10px', opacity: 0.9 }}>
+              Total días mostrados: <strong>{schedule.s1.length}</strong> (incluye {getCoverageStartDayIndex(params)} de gracia)
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px' }}>
               <button className="btn-secondary" onClick={handlePDFExport}>
                 📄 Reporte PDF
               </button>

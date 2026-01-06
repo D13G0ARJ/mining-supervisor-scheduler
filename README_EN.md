@@ -16,6 +16,26 @@ The system solves a resource allocation problem with strong constraints:
 2.  **Constraint:** Never 3 supervisors at the same time.
 3.  **Dynamic:** Variable regime ($N$ work days x $M$ rest days).
 
+## 📌 Parameter Definitions (per the document)
+
+The schedule is represented as a sequence of day states:
+
+- `S` = Ascent / travel to site (always 1 day)
+- `I1..In` = Induction (configurable 1 to 5 days)
+- `D1..Dn` = Drilling (effective days required)
+- `B` = Descent / return (always 1 day)
+- `DESC1..` = Rest
+
+For the **NxM** regime inputs in this implementation:
+
+- **N (Work)**: number of work days **after the ascent day**. In the first cycle it is composed of `I + P`.
+    - Example: if `N=14` and `induction=5`, the first cycle has `5` induction days and `9` drilling days.
+- **M (Total rest block)**: size of the non-productive block separating cycles, interpreted as:
+    - `B` (1 day) + `DESC` (rest days) + `S` (1 day: next cycle ascent)
+    - Therefore the **actual rest** is: `DESC = M - 2`.
+
+Note: This is the definition that makes the document’s case calculations line up (e.g. “S1 descends on day = 1 + N”).
+
 ## 🛠️ Solution Architecture
 
 The project core (`src/logic/scheduler.js`) implements a 3-level hierarchical strategy:
