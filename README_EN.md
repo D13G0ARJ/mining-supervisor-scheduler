@@ -12,9 +12,11 @@ High-performance **React** web application for automated planning and validation
 
 ## 🧠 The Challenge
 The system solves a resource allocation problem with strong constraints:
-1.  **Golden Rule:** There must **ALWAYS** be **EXACTLY 2** supervisors drilling.
+1.  **Golden Rule (per PDF):** From day **N+1** (0-based index) there must **ALWAYS** be **EXACTLY 2** supervisors drilling.
 2.  **Constraint:** Never 3 supervisors at the same time.
 3.  **Dynamic:** Variable regime ($N$ work days x $M$ rest days).
+
+Note: Before day **N+1**, it is expected to see days with 0 or 1 drilling due to induction/overlap. The UI shows this as warnings, not as strict rule violations.
 
 ## 📌 Parameter Definitions (per the document)
 
@@ -48,6 +50,11 @@ The project core (`src/logic/scheduler.js`) implements a 3-level hierarchical st
     * Implements a reactive algorithm with **"Lookahead"** (future vision).
     * Scans the grid looking for coverage deficits.
     * Has **self-correction** capability: if it detects missing personnel, it sacrifices rest days to cover the shift, but respects a "Circuit Breaker" to abort if its presence would cause personnel excess (3 people).
+
+### No-solution cases
+
+For some parameter combinations (for example `N=3, M=3, induction=1`) there may be no valid schedule under the rules.
+When that happens, the app still renders a **baseline schedule** (fixed patterns) and shows warnings/errors so you can inspect what failed.
 
 ## 💻 Installation and Usage
 

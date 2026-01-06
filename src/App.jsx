@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import html2canvas from 'html2canvas';
 import { generatePDFReport } from './logic/reportGenerator';
-import { generateScheduleForRequiredDrillDays, validateSchedule, getCoverageStartDayIndex } from './logic/scheduler';
+import { generateSchedule, generateBaselineSchedule, validateSchedule, getCoverageStartDayIndex, getTwoDrillersStartDayIndex } from './logic/scheduler';
 import { ScheduleGrid } from './components/ScheduleGrid';
 import './App.css';
 
@@ -12,40 +12,59 @@ function App() {
     N: 14,
     M: 7,
     induction: 5,
-    requiredDrillDays: 90
+    totalDays: 30
   });
 
   const [schedule, setSchedule] = useState(null);
   const [errors, setErrors] = useState([]);
 
   const gracePeriod = getCoverageStartDayIndex(params);
-  const expectedTotalColumns = params.requiredDrillDays + gracePeriod;
-  // El límite de exportación se aplica a los días requeridos (D1..Dn), no al total de columnas (incluye gracia).
-  const isScheduleTooLongToExport = params.requiredDrillDays > MAX_EXPORT_DAYS;
+  const twoDrillersStart = getTwoDrillersStartDayIndex(params);
+  const isScheduleTooLongToExport = params.totalDays > MAX_EXPORT_DAYS;
 
   const handleCompute = () => {
-    // PDF model: N = días de trabajo excluyendo subida (S). Primer ciclo perfora: N - induction.
+    // PDF model: N = work days excluding ascent day (S). First cycle drilling is N - induction.
     if (params.N <= params.induction + 1) {
       alert(`Error de Configuración: N (${params.N}) debe ser al menos Inducción (${params.induction}) + 2 para tener >=2 días de perforación.`);
       return;
     }
 
     try {
-      const { schedule: finalSchedule, gracePeriod, totalDays } = generateScheduleForRequiredDrillDays({
+      const scheduleParams = {
         N: params.N,
         M: params.M,
         induction: params.induction,
-        requiredDrillDays: params.requiredDrillDays
-      });
+        totalDays: params.totalDays
+      };
 
+      const finalSchedule = generateSchedule(scheduleParams);
       setSchedule(finalSchedule);
-      const errs = validateSchedule(finalSchedule, totalDays, gracePeriod);
+
+      const errs = validateSchedule(finalSchedule, params.totalDays, twoDrillersStart);
       setErrors(errs);
     } catch (e) {
       console.error(e);
-      alert(e?.message || 'No se pudo generar un cronograma válido con esos parámetros.');
-      setSchedule(null);
-      setErrors([]);
+      const message = e?.message || 'No se pudo generar un cronograma válido con esos parámetros.';
+      alert(message);
+
+      // Fallback: still render a baseline schedule + warnings for inspection.
+      try {
+        const fallbackSchedule = generateBaselineSchedule({
+          N: params.N,
+          M: params.M,
+          induction: params.induction,
+          totalDays: params.totalDays
+        });
+        setSchedule(fallbackSchedule);
+
+        const fallbackErrors = validateSchedule(fallbackSchedule, params.totalDays, twoDrillersStart);
+        setErrors([{ day: 1, msg: `Advertencia: ${message}` }, ...fallbackErrors]);
+      } catch (fallbackErr) {
+        // If even the baseline can't be generated (invalid params), clear the view.
+        console.error(fallbackErr);
+        setSchedule(null);
+        setErrors([{ day: 1, msg: `Error: ${message}` }]);
+      }
     }
   };
 
@@ -111,7 +130,7 @@ function App() {
   const handleExport = async () => {
     if (!schedule) return;
     if (isScheduleTooLongToExport) {
-      alert(`No se puede descargar la imagen: los días requeridos de perforación son ${params.requiredDrillDays} (máximo permitido: ${MAX_EXPORT_DAYS}).`);
+      alert(`No se puede descargar la imagen: el cronograma es de ${params.totalDays} días (máximo permitido: ${MAX_EXPORT_DAYS}).`);
       return;
     }
     const dataUrl = await captureGrid();
@@ -129,7 +148,7 @@ function App() {
   const handlePDFExport = async () => {
     if (!schedule) return;
     if (isScheduleTooLongToExport) {
-      alert(`No se puede descargar el PDF: los días requeridos de perforación son ${params.requiredDrillDays} (máximo permitido: ${MAX_EXPORT_DAYS}).`);
+      alert(`No se puede descargar el PDF: el cronograma es de ${params.totalDays} días (máximo permitido: ${MAX_EXPORT_DAYS}).`);
       return;
     }
     const dataUrl = await captureGrid();
@@ -141,7 +160,6 @@ function App() {
       N: params.N,
       M: params.M,
       induction: params.induction,
-      requiredDrillDays: params.requiredDrillDays,
       totalDays: schedule?.s1?.length ?? 0
     };
     generatePDFReport(pdfParams, errors, dataUrl);
@@ -193,18 +211,16 @@ function App() {
             />
           </div>
           <div className="form-group">
-            <label>Días con 2 supervisores perforando (requeridos)</label>
+            <label>Total Días</label>
             <input
               className="form-input"
               type="number"
               min="1"
-              value={params.requiredDrillDays}
-              onChange={e => setParams({ ...params, requiredDrillDays: parseInt(e.target.value) })}
+              value={params.totalDays}
+              onChange={e => setParams({ ...params, totalDays: parseInt(e.target.value) })}
             />
             <div className="form-hint">
-              Nota: el conteo de perforación inicia después del periodo de gracia.
-              <br />
-              Gracia: <strong>{gracePeriod}</strong> días · Total a mostrar: <strong>{expectedTotalColumns}</strong> días.
+              La grilla muestra exactamente <strong>{params.totalDays}</strong> días, desde el índice <strong>0</strong> al <strong>{Math.max(0, params.totalDays - 1)}</strong>.
             </div>
           </div>
           <div className="form-actions">
@@ -219,9 +235,9 @@ function App() {
         <div className="warning-panel">
           <span style={{ fontSize: '1.2rem', marginTop: '-2px' }}>ℹ️</span>
           <div>
-            <strong>Periodo de Gracia Activo:</strong> Los indicadores rojos en la grilla durante los primeros <strong>{getCoverageStartDayIndex(params)} días</strong> son esperados.
+            <strong>Periodo de Gracia Activo:</strong> Durante los primeros <strong>{getCoverageStartDayIndex(params)} días</strong> (Subida + Inducción) es esperable no tener 2 perforando.
             <br />
-            Se deben a la fase inicial de <em>Subida + Inducción</em> donde es físicamente imposible tener cobertura completa.
+            La regla de “2 perforando” se evalúa desde el día <strong>{getTwoDrillersStartDayIndex(params)}</strong> (según el PDF).
           </div>
         </div>
       )}
@@ -245,7 +261,7 @@ function App() {
       {schedule && (
         <div className="results-card">
           <div className="grid-scroll-area">
-            <ScheduleGrid schedule={schedule} totalDays={schedule.s1.length} gracePeriod={getCoverageStartDayIndex(params)} />
+            <ScheduleGrid schedule={schedule} totalDays={schedule.s1.length} gracePeriod={gracePeriod} strictStart={twoDrillersStart} />
           </div>
 
           <div className="legend">

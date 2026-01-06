@@ -12,9 +12,11 @@ Aplicación web en **React** de alto rendimiento para la planificación y valida
 
 ## 🧠 El Desafío
 El sistema resuelve un problema de asignación de recursos con restricciones fuertes:
-1.  **Regla de Oro:** Siempre debe haber **EXACTAMENTE 2** supervisores perforando.
+1.  **Regla de Oro (según PDF):** Desde el día **N+1** (índice 0-based) debe haber **EXACTAMENTE 2** supervisores perforando.
 2.  **Restricción:** Nunca 3 supervisores al mismo tiempo.
 3.  **Dinámica:** Régimen variable ($N$ días trabajo x $M$ días descanso).
+
+Nota: Antes del día **N+1** puede haber días con 0 o 1 perforando por inducción/solape de turnos (esto se muestra como advertencia, no como incumplimiento de la regla estricta).
 
 ## 📌 Definición de Parámetros (según documento)
 
@@ -48,6 +50,11 @@ El núcleo del proyecto (`src/logic/scheduler.js`) implementa una estrategia jer
     * Implementa un algoritmo reactivo con **"Lookahead"** (visión a futuro).
     * Escanea la grilla en busca de déficits de cobertura.
     * Tiene capacidad de **autocorrección**: si detecta que falta personal, sacrifica días de descanso para cubrir el turno, pero respeta un "Circuit Breaker" para abortar si su presencia causaría un exceso de personal (3 personas).
+
+### Casos sin solución
+
+Para ciertos parámetros (por ejemplo `N=3, M=3, inducción=1`) puede no existir un cronograma válido bajo las reglas.
+En ese caso, la aplicación igual renderiza un **cronograma base** (patrones fijos) y muestra las advertencias correspondientes para facilitar el análisis.
 
 ## 💻 Instalación y Uso
 

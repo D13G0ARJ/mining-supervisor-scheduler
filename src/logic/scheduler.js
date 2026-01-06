@@ -10,9 +10,15 @@ export const STATES = {
 const createEmptySchedule = (days) => new Array(days).fill(STATES.VACIO);
 
 export const getCoverageStartDayIndex = (params) => {
-    // Día en que termina la inducción y la operación ya puede tener 2 perforando.
-    // Con el modelo del PDF: Día 0 = S (subida), Día 1..induction = I, Día (1+induction) = primer P.
+    // Day when induction ends and drilling can physically begin.
+    // In the PDF model: Day 0 = S (ascent), Day 1..induction = I, Day (1+induction) = first P.
     return 1 + params.induction;
+};
+
+// 0-based day index from which the PDF expects continuous "2 drilling" coverage.
+// In Case 1 this matches when S1 enters B and S3 can start P: N + 1.
+export const getTwoDrillersStartDayIndex = (params) => {
+    return params.N + 1;
 };
 
 const assertValidParams = (params) => {
@@ -23,8 +29,8 @@ const assertValidParams = (params) => {
     if (!Number.isInteger(induction) || induction < 1 || induction > 5) throw new Error('Inducción inválida');
     if (!Number.isInteger(totalDays) || totalDays < 1) throw new Error('Total de días inválido');
 
-    // En el PDF: N representa los días de trabajo excluyendo la subida (S). Es decir, N = I + P (en el primer ciclo).
-    // Por lo tanto debe existir al menos un bloque de P con varios días.
+    // In the PDF: N is the number of work days excluding the ascent day (S), i.e. N = I + P (in the first cycle).
+    // Therefore we must have at least a small P block.
     const firstCyclePDays = N - induction;
     if (firstCyclePDays < 2) {
         throw new Error(`Configuración inválida: N (${N}) debe ser al menos inducción (${induction}) + 2 para tener >=2 días de perforación.`);
@@ -32,12 +38,12 @@ const assertValidParams = (params) => {
 };
 
 /**
- * Genera un patrón fijo (S1) siguiendo el modelo del PDF:
- * - Día 0 de cada ciclo: S
- * - Días 1..N: trabajo (primer ciclo: I hasta induction, luego P; ciclos siguientes: todo P)
- * - Día N+1: B
- * - Días restantes del ciclo: D (cantidad = M-2)
- * Longitud de ciclo: N + M
+ * Generates a fixed pattern (used for S1 and as a baseline) following the PDF model:
+ * - Cycle day 0: S
+ * - Cycle days 1..N: work (first cycle: I up to induction, then P; next cycles: all P)
+ * - Cycle day N+1: B
+ * - Remaining cycle days: D (count = M-2)
+ * Cycle length: N + M
  */
 const generateFixedPattern = (offset, params, totalDays) => {
     const { N, M, induction } = params;
@@ -81,14 +87,15 @@ const generateFixedPattern = (offset, params, totalDays) => {
 
 const MIN_P_BLOCK = 2;
 
-const makeInitialState = ({ offsetDays, hasInductionFirstCycle, inductionDays }) => {
+const makeInitialState = ({ offsetDays, hasInductionFirstCycle, inductionDays, canReduceRest }) => {
     return {
         untilStart: offsetDays,
         phase: offsetDays > 0 ? 'PRE' : 'S',
         firstCycle: true,
         inductionLeft: hasInductionFirstCycle ? inductionDays : 0,
         pRun: 0,
-        restTaken: 0
+        restTaken: 0,
+        canReduceRest: !!canReduceRest
     };
 };
 
@@ -99,7 +106,8 @@ const stateKey = (s) => {
         s.firstCycle ? 1 : 0,
         s.inductionLeft,
         s.pRun,
-        s.restTaken
+        s.restTaken,
+        s.canReduceRest ? 1 : 0
     ].join('|');
 };
 
@@ -142,8 +150,7 @@ const nextOptionsForSupervisor = (state, params, maxPConsecutive) => {
 
     if (state.phase === 'P') {
         const pRunAfterToday = state.pRun + 1;
-
-        // Continue P (permitido mientras no exceda el máximo consecutivo).
+        // Continue P (allowed while staying under the consecutive cap).
         if (pRunAfterToday < maxPConsecutive) {
             options.push({
                 out: STATES.PERFORACION,
@@ -166,7 +173,7 @@ const nextOptionsForSupervisor = (state, params, maxPConsecutive) => {
             });
         }
 
-        // Si ya llegamos al máximo, forzamos finalizar en B (sin opción de seguir en P).
+        // If we hit the maximum, force transition to B (no option to continue P).
         if (pRunAfterToday >= maxPConsecutive) {
             options.length = 0;
             options.push({
@@ -197,10 +204,10 @@ const nextOptionsForSupervisor = (state, params, maxPConsecutive) => {
     }
 
     if (state.phase === 'D') {
-        // En el modelo del PDF, el bloque de descanso D después de B dura al menos (M-2)
-        // días (porque el descanso total M incluye B + D*(M-2) + S).
-        // Permitimos descansar más si hace falta para cumplir "exactamente 2 perforando".
-        const minDDays = Math.max(1, params.M - 2);
+        // The PDF favors "Reduce Rest" to close coverage gaps.
+        // For S2/S3 we allow returning early (minimum 1 day of D to avoid direct B->S).
+        // DFS still tries to rest more first ("Keep resting" option).
+        const minDDays = state.canReduceRest ? 1 : Math.max(1, params.M - 2);
 
         const restTakenAfterToday = state.restTaken + 1;
 
@@ -214,7 +221,11 @@ const nextOptionsForSupervisor = (state, params, maxPConsecutive) => {
         if (restTakenAfterToday >= minDDays) {
             options.push({
                 out: STATES.DESCANSO,
-                next: { ...state, phase: 'S', restTaken: 0 }
+                next: {
+                    ...state,
+                    phase: 'S',
+                    restTaken: 0
+                }
             });
         }
 
@@ -227,13 +238,32 @@ const nextOptionsForSupervisor = (state, params, maxPConsecutive) => {
 };
 
 const solveS2S3 = (params, s1, s3Offset, totalDays) => {
-    const coverageStart = getCoverageStartDayIndex(params);
+    const twoDrillersStart = getTwoDrillersStartDayIndex(params);
+
+    // Deterministic segments (per PDF) to avoid visually "weird" solutions:
+    // - S3 strictly respects its entry + initial induction.
+    const baselineS2 = generateFixedPattern(0, params, totalDays);
+    const baselineS3 = generateFixedPattern(s3Offset, params, totalDays);
+    // PDF Case 1: S2 can adjust (work less) to synchronize; do not force S2 to the fixed baseline.
+    const enforceS2Until = 0;
+    const enforceS3Until = Math.max(0, s3Offset + 1 + params.induction); // S + I(1..induction)
 
     const s2Out = createEmptySchedule(totalDays);
     const s3Out = createEmptySchedule(totalDays);
 
-    const initS2 = makeInitialState({ offsetDays: 0, hasInductionFirstCycle: true, inductionDays: params.induction });
-    const initS3 = makeInitialState({ offsetDays: s3Offset, hasInductionFirstCycle: true, inductionDays: params.induction });
+    const initS2 = makeInitialState({
+        offsetDays: 0,
+        hasInductionFirstCycle: true,
+        inductionDays: params.induction,
+        canReduceRest: true
+    });
+
+    const initS3 = makeInitialState({
+        offsetDays: s3Offset,
+        hasInductionFirstCycle: true,
+        inductionDays: params.induction,
+        canReduceRest: true
+    });
 
     const memoFail = new Set();
 
@@ -246,23 +276,29 @@ const solveS2S3 = (params, s1, s3Offset, totalDays) => {
         const s2Options = nextOptionsForSupervisor(s2State, params, maxPConsecutive);
         const s3Options = nextOptionsForSupervisor(s3State, params, maxPConsecutive);
 
+        const forcedS2 = dayIdx < enforceS2Until ? baselineS2[dayIdx] : null;
+        const forcedS3 = dayIdx < enforceS3Until ? baselineS3[dayIdx] : null;
+
+        const filteredS2Options = forcedS2 ? s2Options.filter(o => o.out === forcedS2) : s2Options;
+        const filteredS3Options = forcedS3 ? s3Options.filter(o => o.out === forcedS3) : s3Options;
+
         const s1Char = s1[dayIdx];
 
-        for (const opt2 of s2Options) {
-            for (const opt3 of s3Options) {
+        for (const opt2 of filteredS2Options) {
+            for (const opt3 of filteredS3Options) {
                 const pCount =
                     (s1Char === STATES.PERFORACION ? 1 : 0) +
                     (opt2.out === STATES.PERFORACION ? 1 : 0) +
                     (opt3.out === STATES.PERFORACION ? 1 : 0);
 
-                // Regla 2: nunca 3 perforando.
+                // Rule: never 3 drilling.
                 if (pCount > 2) continue;
 
-                // Regla 1: desde que ya es físicamente posible (fin de inducción), exactamente 2 perforando.
-                if (dayIdx >= coverageStart && pCount !== 2) continue;
+                // Rule (PDF): from N+1 onwards, keep exactly 2 drilling.
+                if (dayIdx >= twoDrillersStart && pCount !== 2) continue;
 
-                // Extra: evitamos que haya "S" solapadas innecesarias (no es regla, pero reduce soluciones raras)
-                // (no bloqueante)
+                // Extra: avoid unnecessary overlapping "S" (not a rule, but reduces odd solutions)
+                // (non-blocking)
 
                 s2Out[dayIdx] = opt2.out;
                 s3Out[dayIdx] = opt3.out;
@@ -275,19 +311,13 @@ const solveS2S3 = (params, s1, s3Offset, totalDays) => {
         return false;
     };
 
-    // Búsqueda adaptativa: intenta imponer un máximo de P consecutivas creciente.
-    // Esto evita soluciones de \"trabajar siempre\" pero mantiene factibilidad cuando se necesitan tramos largos.
-    const minMaxP = Math.max(params.N, MIN_P_BLOCK);
-    const maxTry = Math.min(totalDays, minMaxP + 120);
+    // PDF: try without exceeding N; if no solution exists, fail explicitly.
+    const maxPConsecutive = Math.max(params.N, MIN_P_BLOCK);
+    memoFail.clear();
+    const ok = dfs(0, initS2, initS3, maxPConsecutive);
+    if (ok) return { s2: s2Out, s3: s3Out };
 
-    for (let maxPConsecutive = minMaxP; maxPConsecutive <= maxTry; maxPConsecutive++) {
-        // Reset memo por intento para evitar contaminación entre máximos distintos.
-        memoFail.clear();
-        const ok = dfs(0, initS2, initS3, maxPConsecutive);
-        if (ok) return { s2: s2Out, s3: s3Out };
-    }
-
-    throw new Error('No se encontró un cronograma válido que cumpla las reglas (exactamente 2 perforando) con los parámetros actuales.');
+    throw new Error('No se encontró un cronograma válido que cumpla las reglas con el límite N y ajuste por descanso (sin extender trabajo).');
 };
 
 export const generateSchedule = (params) => {
@@ -295,20 +325,33 @@ export const generateSchedule = (params) => {
 
     const { totalDays, N, induction } = params;
 
-    // S1: fijo (no se modifica).
+    // S1: fixed (never modified).
     const s1 = generateFixedPattern(0, params, totalDays);
 
-    // S3: arranca para que su P inicie cuando S1 baja (modelo del PDF).
+    // S3: starts so that its P begins when S1 descends (PDF model).
     const offsetS3 = N - induction;
     const baselineS3 = generateFixedPattern(offsetS3, params, totalDays);
 
-    // Solver para ajustar S2 y S3 y cumplir reglas estrictas.
+    // Solver adjusts S2 and S3 to satisfy strict rules.
     const { s2, s3 } = solveS2S3(params, s1, offsetS3, totalDays);
 
-    // Nota: baselineS3 se conserva solo como referencia de layout; la salida real es la del solver.
-    // (Si quieres comparar visualmente, puedes alternarlo en UI.)
+    // Note: baselineS3 is kept only as a layout/reference; the actual output is the solver result.
+    // (If you want to compare visually, you can toggle it in the UI.)
     void baselineS3;
 
+    return { s1, s2, s3 };
+};
+
+// Baseline schedule (no solver): useful as a fallback to visualize an unsolved case.
+// S1 and S2 follow the fixed pattern from day 0; S3 uses the PDF standard offset.
+export const generateBaselineSchedule = (params) => {
+    assertValidParams(params);
+
+    const { totalDays, N, induction } = params;
+    const s1 = generateFixedPattern(0, params, totalDays);
+    const s2 = generateFixedPattern(0, params, totalDays);
+    const offsetS3 = N - induction;
+    const s3 = generateFixedPattern(offsetS3, params, totalDays);
     return { s1, s2, s3 };
 };
 
@@ -324,7 +367,7 @@ export const validateSchedule = (schedule, totalDays, gracePeriod = 0) => {
 
     const isP = (v) => v === STATES.PERFORACION;
 
-    // Validaciones de patrón por supervisor
+    // Per-supervisor pattern validations
     for (const sup of supervisors) {
         const arr = sup.data;
 
@@ -339,11 +382,11 @@ export const validateSchedule = (schedule, totalDays, gracePeriod = 0) => {
                 errors.push({ day: i + 1, msg: `${sup.name}: Error patrón (B-S sin descanso intermedio)` });
             }
 
-            // P aislada de 1 día
+            // Single-day P (isolated)
             if (arr[i] === STATES.PERFORACION) {
-                // Importante: si el cronograma está recortado, el último día puede quedar
-                // como P sin que realmente sea "1 solo día". Solo validamos cuando existen
-                // ambos vecinos dentro del horizonte.
+                // Important: if the schedule is cropped, the last day might be P without
+                // actually being a "single-day" drilling block. Only validate when both
+                // neighbors exist within the horizon.
                 if (i - 1 >= 0 && i + 1 < totalDays) {
                     const prevIsP = isP(arr[i - 1]);
                     const nextIsP = isP(arr[i + 1]);
@@ -355,15 +398,17 @@ export const validateSchedule = (schedule, totalDays, gracePeriod = 0) => {
         }
     }
 
-    for (let i = gracePeriod; i < totalDays; i++) {
+    for (let i = 0; i < totalDays; i++) {
         const pCount =
             (isP(s1[i]) ? 1 : 0) +
             (isP(s2[i]) ? 1 : 0) +
             (isP(s3[i]) ? 1 : 0);
 
         if (pCount === 3) errors.push({ day: i + 1, msg: 'Error: 3 supervisores perforando (prohibido)' });
-        if (pCount === 1) errors.push({ day: i + 1, msg: 'Error: Solo 1 supervisor perforando (prohibido)' });
-        if (pCount === 0) errors.push({ day: i + 1, msg: 'Error: Sin cobertura de perforación' });
+        if (i >= gracePeriod) {
+            if (pCount === 1) errors.push({ day: i + 1, msg: 'Error: Solo 1 supervisor perforando (prohibido)' });
+            if (pCount === 0) errors.push({ day: i + 1, msg: 'Error: Sin cobertura de perforación' });
+        }
     }
     return errors;
 };
