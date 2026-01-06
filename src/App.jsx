@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import html2canvas from 'html2canvas';
 import { generatePDFReport } from './logic/reportGenerator';
-import { generateSchedule, validateSchedule, STATES } from './logic/scheduler';
+import { generateSchedule, validateSchedule, getCoverageStartDayIndex } from './logic/scheduler';
 import { ScheduleGrid } from './components/ScheduleGrid';
 import './App.css';
 
@@ -10,25 +10,72 @@ function App() {
     N: 14,
     M: 7,
     induction: 5,
-    totalDays: 45
+    requiredDrillDays: 90
   });
 
   const [schedule, setSchedule] = useState(null);
   const [errors, setErrors] = useState([]);
 
   const handleCompute = () => {
-    // Validation: N must allow at least 1 day of P (N > S + I => N > 1 + I)
+    // PDF model: N = días de trabajo excluyendo subida (S). Primer ciclo perfora: N - induction.
     if (params.N <= params.induction + 1) {
-      alert(`Error de Configuración: El tiempo de trabajo (N=${params.N}) es muy corto para la Inducción (${params.induction}). S1 no tendría días de perforación.`);
+      alert(`Error de Configuración: N (${params.N}) debe ser al menos Inducción (${params.induction}) + 2 para tener >=2 días de perforación.`);
       return;
     }
 
-    const result = generateSchedule(params);
-    setSchedule(result);
-    // Ignore startup ramp (Grace Period = N days) to avoid initial "0 drilling" alerts
-    const gracePeriod = params.N;
-    const errs = validateSchedule(result, params.totalDays, gracePeriod);
-    setErrors(errs);
+    try {
+      const gracePeriod = getCoverageStartDayIndex(params);
+
+      const findCutIndex = (sch, totalDays, required) => {
+        let covered = 0;
+        for (let i = gracePeriod; i < totalDays; i++) {
+          const pCount =
+            (sch.s1[i] === 'P' ? 1 : 0) +
+            (sch.s2[i] === 'P' ? 1 : 0) +
+            (sch.s3[i] === 'P' ? 1 : 0);
+          if (pCount === 2) {
+            covered++;
+            if (covered >= required) return i;
+          }
+        }
+        return null;
+      };
+
+      const baseBuffer = (params.N + params.M) * 6 + 30;
+      let simulationDays = params.requiredDrillDays + gracePeriod + baseBuffer;
+      let lastError = null;
+
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const scheduleParams = { ...params, totalDays: simulationDays };
+        const result = generateSchedule(scheduleParams);
+        const cutIdx = findCutIndex(result, simulationDays, params.requiredDrillDays);
+
+        if (cutIdx === null) {
+          simulationDays = Math.floor(simulationDays * 1.5);
+          lastError = new Error('No se alcanzó el total de días de perforación requeridos dentro del horizonte de simulación.');
+          continue;
+        }
+
+        const finalDays = cutIdx + 1;
+        const finalSchedule = {
+          s1: result.s1.slice(0, finalDays),
+          s2: result.s2.slice(0, finalDays),
+          s3: result.s3.slice(0, finalDays)
+        };
+
+        setSchedule(finalSchedule);
+        const errs = validateSchedule(finalSchedule, finalDays, gracePeriod);
+        setErrors(errs);
+        return;
+      }
+
+      throw lastError || new Error('No se pudo generar el cronograma dentro de los límites de simulación.');
+    } catch (e) {
+      console.error(e);
+      alert(e?.message || 'No se pudo generar un cronograma válido con esos parámetros.');
+      setSchedule(null);
+      setErrors([]);
+    }
   };
 
   // Helper to capture grid image
@@ -109,11 +156,19 @@ function App() {
       alert("Error generando la imagen para el reporte.");
       return;
     }
-    generatePDFReport(params, errors, dataUrl);
+    const pdfParams = {
+      N: params.N,
+      M: params.M,
+      induction: params.induction,
+      requiredDrillDays: params.requiredDrillDays,
+      totalDays: schedule?.s1?.length ?? 0
+    };
+    generatePDFReport(pdfParams, errors, dataUrl);
   };
 
   useEffect(() => {
     handleCompute();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -157,13 +212,13 @@ function App() {
             />
           </div>
           <div className="form-group">
-            <label>Total Días</label>
+            <label>Días de Perforación Requeridos</label>
             <input
               className="form-input"
               type="number"
-              min="15"
-              value={params.totalDays}
-              onChange={e => setParams({ ...params, totalDays: parseInt(e.target.value) })}
+              min="1"
+              value={params.requiredDrillDays}
+              onChange={e => setParams({ ...params, requiredDrillDays: parseInt(e.target.value) })}
             />
           </div>
           <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end' }}>
@@ -179,7 +234,7 @@ function App() {
         <div className="warning-panel">
           <span style={{ fontSize: '1.2rem', marginTop: '-2px' }}>ℹ️</span>
           <div>
-            <strong>Periodo de Gracia Activo:</strong> Los indicadores rojos en la grilla durante los primeros <strong>{params.N} días</strong> son esperados.
+            <strong>Periodo de Gracia Activo:</strong> Los indicadores rojos en la grilla durante los primeros <strong>{getCoverageStartDayIndex(params)} días</strong> son esperados.
             <br />
             Se deben a la fase inicial de <em>Subida + Inducción</em> donde es físicamente imposible tener cobertura completa.
           </div>
@@ -194,7 +249,7 @@ function App() {
           <ul className="alerts-list">
             {errors.map((e, idx) => (
               <li key={idx} className="alert-item">
-                <span className="alert-badge">Día {e.day + 1}</span>
+                <span className="alert-badge">Día {e.day}</span>
                 {e.msg}
               </li>
             ))}
@@ -205,7 +260,7 @@ function App() {
       {schedule && (
         <div className="results-card">
           <div className="grid-scroll-area">
-            <ScheduleGrid schedule={schedule} totalDays={params.totalDays} />
+            <ScheduleGrid schedule={schedule} totalDays={schedule.s1.length} />
           </div>
 
           <div className="legend">
